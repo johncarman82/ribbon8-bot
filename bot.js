@@ -212,5 +212,3 @@ server.listen(CONFIG.PORT, () => {
   console.log(`║   Port:      ${CONFIG.PORT}                          ║`);
   console.log("╚════════════════════════════════════════╝");
 });
-
-});
