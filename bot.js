@@ -196,6 +196,28 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+      // Manual trade from dashboard
+      if (req.method === "POST" && req.url === "/manual") {
+              const body = await getBody();
+              const side = body.side;
+              if (side !== "BUY" && side !== "SELL") {
+                        res.writeHead(400); res.end("Invalid side"); return;
+              }
+              try {
+                        const ticker = await bitunixRequest("GET", `/api/v1/futures/ticker?symbol=${CONFIG.SYMBOL}`);
+                        const price = parseFloat(ticker?.data?.close || ticker?.data?.lastPrice || 0);
+                        if (!price) { res.writeHead(500); res.end("Could not fetch price"); return; }
+                        console.log(`\n🖱️ Manual ${side} @ $${price}`);
+                        await placeTrade(side, price);
+                        res.writeHead(200, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify({ ok: true, side, price }));
+              } catch(e) {
+                        console.error("Manual trade error:", e.message);
+                        res.writeHead(500); res.end("Trade failed");
+              }
+              return;
+      }
+
   res.writeHead(404); res.end("Not found");
 });
 
