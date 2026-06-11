@@ -1,0 +1,9 @@
+{
+  "name": "ribbon8-bot",
+  "version": "1.0.0",
+  "description": "McGinley Ribbon 8 Trading Bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  }
+}
