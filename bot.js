@@ -1,3 +1,27 @@
+const http = require("http");
+const https = require("https");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+// ─────────────────────────────────────────────
+// CONFIGURATION
+// ─────────────────────────────────────────────
+const CONFIG = {
+  API_KEY:    "da7257b7b80b0d24624f88215b564466",
+  SECRET_KEY: "d7edd407a5ed819a2c17612a7abbcd8d",
+  SYMBOL:     "BTCUSDT",
+  USDT_SIZE:  100,
+  LEVERAGE:   5,
+  SL_PCT:     0.02,
+  TP_PCT:     0.20,
+  PORT:       process.env.PORT || 3000,
+};
+
+// ─────────────────────────────────────────────
+// RUNTIME STATE
+// ─────────────────────────────────────────────
+let ACTIVE    = true;   // bot on/off switch
 let lastTrade = null;   // last trade for dashboard polling
 
 // ─────────────────────────────────────────────
@@ -189,3 +213,4 @@ server.listen(CONFIG.PORT, () => {
   console.log("╚════════════════════════════════════════╝");
 });
 
+});
