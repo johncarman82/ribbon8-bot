@@ -6,7 +6,7 @@ const CONFIG = {
   API_KEY:    "da7257b7b80b0d24624f88215b564466",
   SECRET_KEY: "d7edd407a5ed819a2c17612a7abbcd8d",
   SYMBOL:     "BTCUSDT",
-  USDT_SIZE:  1000,
+  USDT_SIZE:  100,
   LEVERAGE:   5,
   SL_PCT:     0.02,
   TP_PCT:     0.20,
