@@ -121,7 +121,18 @@ async function placeTrade(side, price) {
     }
   } catch(e) { console.error("❌ Trade error:", e.message); }
 }
-
+function getBTCPrice() {
+  return new Promise((resolve) => {
+    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => {
+        try { resolve(parseFloat(JSON.parse(data).price)); }
+        catch(e) { resolve(0); }
+      });
+    }).on("error", () => resolve(0));
+  });
+}
 // ─────────────────────────────────────────────
 // HTTP SERVER
 // ─────────────────────────────────────────────
@@ -217,7 +228,19 @@ const server = http.createServer(async (req, res) => {
               }
               return;
       }
-
+ // Manual trade from dashboard
+  if (req.method === "POST" && req.url === "/manual") {
+    const body = await getBody();
+    const side  = body.side;
+    const price = await getBTCPrice();
+    if (!side || (side !== "BUY" && side !== "SELL")) {
+      res.writeHead(400); res.end("Invalid side"); return;
+    }
+    console.log(`\n🖐️ Manual trade fired: ${side} @ $${price}`);
+    await placeTrade(side, price);
+    res.writeHead(200); res.end("OK");
+    return;
+  }
   res.writeHead(404); res.end("Not found");
 });
 
