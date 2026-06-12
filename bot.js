@@ -241,6 +241,18 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200); res.end("OK");
     return;
   }
+    if (req.method === "POST" && req.url === "/manual") {
+    const body = await getBody();
+    const side  = body.side;
+    const price = await getBTCPrice();
+    if (!side || (side !== "BUY" && side !== "SELL")) {
+      res.writeHead(400); res.end("Invalid side"); return;
+    }
+    console.log(`\n🖐️ Manual trade fired: ${side} @ $${price}`);
+    await placeTrade(side, price);
+    res.writeHead(200); res.end("OK");
+    return;
+  }
   res.writeHead(404); res.end("Not found");
 });
 
