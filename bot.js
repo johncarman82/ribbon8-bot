@@ -123,10 +123,10 @@ async function placeTrade(side, price) {
 }
 function getBTCPrice() {
   return new Promise((resolve) => {
-    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (res) => {
+    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (btcRes) => {
       let data = "";
-      res.on("data", chunk => data += chunk);
-      res.on("end", () => {
+      btcRes.on("data", chunk => data += chunk);
+      btcRes.on("end", () => {
         try { resolve(parseFloat(JSON.parse(data).price)); }
         catch(e) { resolve(0); }
       });
@@ -134,18 +134,7 @@ function getBTCPrice() {
   });
 }
 // ─────────────────────────────────────────────
-function getBTCPrice() {
-  return new Promise((resolve) => {
-    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (res) => {
-      let data = "";
-      res.on("data", chunk => data += chunk);
-      res.on("end", () => {
-        try { resolve(parseFloat(JSON.parse(data).price)); }
-        catch(e) { resolve(0); }
-      });
-    }).on("error", () => resolve(0));
-  });
-}
+
 // HTTP SERVER
 // ─────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
