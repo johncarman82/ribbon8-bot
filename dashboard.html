@@ -210,7 +210,13 @@
       </div>
     </div>
   </div>
-
+ <div class="manual-wrap">
+    <div class="manual-title">Manual Trade</div>
+    <div class="manual-btns">
+      <button class="manual-btn long-btn" onclick="manualTrade('BUY')">▲ Manual Long</button>
+      <button class="manual-btn short-btn" onclick="manualTrade('SELL')">▼ Manual Short</button>
+    </div>
+  </div>
   <div class="log-wrap">
     <div class="panel-title">Trade Log</div>
     <div class="log-list" id="logList">
@@ -233,7 +239,17 @@ function updateSlider(type) {
   };
   document.getElementById(type+'Val').textContent = map[type]();
 }
-
+async function manualTrade(side) {
+  if (!confirm(`Fire a MANUAL ${side === 'BUY' ? 'LONG' : 'SHORT'} trade right now?`)) return;
+  try {
+    const res = await fetch('/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ side })
+    });
+    showToast(res.ok ? `${side === 'BUY' ? '▲ LONG' : '▼ SHORT'} trade fired!` : '❌ Trade failed', !res.ok);
+  } catch(e) { showToast('❌ Could not reach bot', true); }
+}
 async function saveSettings() {
   state.size     = parseInt(document.getElementById('sizeSlider').value);
   state.leverage = parseInt(document.getElementById('leverageSlider').value);
