@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const CONFIG = {
-  API_KEY:    "da7257b7b80b0d24624f88215b564466Y",
+  API_KEY:    "da7257b7b80b0d24624f88215b564466",
   SECRET_KEY: "d7edd407a5ed819a2c17612a7abbcd8d",
   SYMBOL:     "BTCUSDT",
   USDT_SIZE:  100,
@@ -18,18 +18,21 @@ const CONFIG = {
 let ACTIVE    = true;
 let lastTrade = null;
 
-function sign(params, secretKey) {
-  const sorted = Object.keys(params).sort().map(k => `${k}=${params[k]}`).join("&");
-  return crypto.createHmac("sha256", secretKey).update(sorted).digest("hex");
+function sign(nonce, timestamp, apiKey, queryParams, body, secretKey) {
+  const digestInput = nonce + timestamp + apiKey + queryParams + body;
+  const digest = crypto.createHash("sha256").update(digestInput).digest("hex");
+  const signInput = digest + secretKey;
+  return crypto.createHash("sha256").update(signInput).digest("hex");
 }
 
 function bitunixRequest(method, endpoint, body = {}) {
   return new Promise((resolve, reject) => {
     const timestamp = Date.now().toString();
-    const nonce = Math.random().toString(36).substring(2, 18);
-    const signParams = { ...body, timestamp, nonce };
-    const signature = sign(signParams, CONFIG.SECRET_KEY);
-    const payload = JSON.stringify(body);
+    const nonce = crypto.randomBytes(16).toString("hex");
+    const payload = method === "POST" ? JSON.stringify(body) : "";
+    const queryParams = endpoint.includes("?") ? endpoint.split("?")[1] : "";
+    const signature = sign(nonce, timestamp, CONFIG.API_KEY, queryParams, payload, CONFIG.SECRET_KEY);
+
     const options = {
       hostname: "fapi.bitunix.com",
       path: endpoint,
@@ -43,6 +46,7 @@ function bitunixRequest(method, endpoint, body = {}) {
         "language": "en-US",
       },
     };
+
     const req = https.request(options, (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
@@ -72,8 +76,7 @@ function getBTCPrice() {
         try {
           const json = JSON.parse(data);
           const price = parseFloat(json.data?.[0]?.lastPrice || 0);
-
-          console.log(`BTC Price fetched: $${price}`);
+          console.log(`BTC Price: $${price}`);
           resolve(price);
         } catch(e) { resolve(0); }
       });
@@ -91,7 +94,7 @@ async function setLeverage(side) {
       leverage: CONFIG.LEVERAGE,
       positionSide,
     });
-    console.log(`Leverage: ${JSON.stringify(result)}`);
+    console.log(`Leverage response: ${JSON.stringify(result)}`);
   } catch(e) { console.error("Leverage failed:", e.message); }
 }
 
