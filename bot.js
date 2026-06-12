@@ -61,7 +61,7 @@ function getBTCPrice() {
   return new Promise((resolve) => {
     const options = {
       hostname: "fapi.bitunix.com",
-      path: "/api/v1/futures/market/ticker?symbol=BTCUSDT",
+      path: "/api/v1/futures/market/tickers?symbols=BTCUSDT",
       method: "GET",
       headers: { "Content-Type": "application/json" }
     };
@@ -71,7 +71,8 @@ function getBTCPrice() {
       r.on("end", () => {
         try {
           const json = JSON.parse(data);
-          const price = parseFloat(json.data?.lastPrice || json.data?.[0]?.lastPrice || 0);
+          const price = parseFloat(json.data?.[0]?.lastPrice || 0);
+
           console.log(`BTC Price fetched: $${price}`);
           resolve(price);
         } catch(e) { resolve(0); }
