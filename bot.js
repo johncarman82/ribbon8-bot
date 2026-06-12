@@ -134,6 +134,18 @@ function getBTCPrice() {
   });
 }
 // ─────────────────────────────────────────────
+function getBTCPrice() {
+  return new Promise((resolve) => {
+    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (res) => {
+      let data = "";
+      res.on("data", chunk => data += chunk);
+      res.on("end", () => {
+        try { resolve(parseFloat(JSON.parse(data).price)); }
+        catch(e) { resolve(0); }
+      });
+    }).on("error", () => resolve(0));
+  });
+}
 // HTTP SERVER
 // ─────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
