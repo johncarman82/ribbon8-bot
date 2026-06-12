@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 const CONFIG = {
-  API_KEY:    "da7257b7b80b0d24624f88215b564466",
+  API_KEY:    "da7257b7b80b0d24624f88215b564466Y",
   SECRET_KEY: "d7edd407a5ed819a2c17612a7abbcd8d",
   SYMBOL:     "BTCUSDT",
   USDT_SIZE:  100,
@@ -40,12 +40,16 @@ function bitunixRequest(method, endpoint, body = {}) {
         "sign": signature,
         "timestamp": timestamp,
         "nonce": nonce,
+        "language": "en-US",
       },
     };
     const req = https.request(options, (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
-      r.on("end", () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
+      r.on("end", () => {
+        try { resolve(JSON.parse(data)); }
+        catch(e) { reject(e); }
+      });
     });
     req.on("error", reject);
     if (method === "POST") req.write(payload);
@@ -55,44 +59,45 @@ function bitunixRequest(method, endpoint, body = {}) {
 
 function getBTCPrice() {
   return new Promise((resolve) => {
-    https.get("https://fapi.bitunix.com/api/v1/futures/ticker?symbol=BTCUSDT", (r) => {
+    const options = {
+      hostname: "fapi.bitunix.com",
+      path: "/api/v1/futures/market/ticker?symbol=BTCUSDT",
+      method: "GET",
+      headers: { "Content-Type": "application/json" }
+    };
+    const req = https.request(options, (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
       r.on("end", () => {
-        try { 
+        try {
           const json = JSON.parse(data);
-          resolve(parseFloat(json.data?.lastPrice || json.data?.[0]?.lastPrice || 0)); 
-        }
-        catch(e) { resolve(0); }
+          const price = parseFloat(json.data?.lastPrice || json.data?.[0]?.lastPrice || 0);
+          console.log(`BTC Price fetched: $${price}`);
+          resolve(price);
+        } catch(e) { resolve(0); }
       });
-    }).on("error", () => resolve(0));
+    });
+    req.on("error", () => resolve(0));
+    req.end();
   });
 }
 
 async function setLeverage(side) {
   const positionSide = side === "BUY" ? "LONG" : "SHORT";
   try {
-    await bitunixRequest("POST", "/api/v1/futures/leverage", {
-      symbol: CONFIG.SYMBOL, leverage: CONFIG.LEVERAGE, positionSide,
+    const result = await bitunixRequest("POST", "/api/v1/futures/account/set_leverage", {
+      symbol: CONFIG.SYMBOL,
+      leverage: CONFIG.LEVERAGE,
+      positionSide,
     });
-    console.log(`Leverage set to ${CONFIG.LEVERAGE}x`);
+    console.log(`Leverage: ${JSON.stringify(result)}`);
   } catch(e) { console.error("Leverage failed:", e.message); }
-}
-
-async function closePosition(side) {
-  const closeSide    = side === "BUY" ? "SELL" : "BUY";
-  const positionSide = side === "BUY" ? "SHORT" : "LONG";
-  try {
-    await bitunixRequest("POST", "/api/v1/futures/order", {
-      symbol: CONFIG.SYMBOL, side: closeSide, positionSide,
-      orderType: "MARKET", qty: "0", reduceOnly: true,
-    });
-    console.log(`Closed ${positionSide} position`);
-  } catch(e) { console.error("Close failed:", e.message); }
 }
 
 async function placeTrade(side, price) {
   if (!ACTIVE) { console.log("Bot is paused"); return; }
+  if (!price || price === 0) { console.error("Invalid price — trade cancelled"); return; }
+
   const positionSide = side === "BUY" ? "LONG" : "SHORT";
   const slPrice = side === "BUY"
     ? (price * (1 - CONFIG.SL_PCT)).toFixed(2)
@@ -108,13 +113,21 @@ async function placeTrade(side, price) {
 
   try {
     await setLeverage(side);
-    await closePosition(side);
-    const result = await bitunixRequest("POST", "/api/v1/futures/order", {
-      symbol: CONFIG.SYMBOL, side, positionSide,
-      orderType: "MARKET", qty,
-      tpPrice, slPrice,
-      tpStopType: "MARK_PRICE", slStopType: "MARK_PRICE",
+
+    const result = await bitunixRequest("POST", "/api/v1/futures/trade/place_order", {
+      symbol: CONFIG.SYMBOL,
+      side: side,
+      qty: qty,
+      orderType: "MARKET",
+      tradeSide: "OPEN",
+      tpPrice: tpPrice,
+      slPrice: slPrice,
+      tpStopType: "MARK_PRICE",
+      slStopType: "MARK_PRICE",
     });
+
+    console.log(`Bitunix response: ${JSON.stringify(result)}`);
+
     if (result.code === 0) {
       console.log(`Order placed! ID: ${result.data?.orderId}`);
     } else {
