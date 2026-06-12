@@ -55,11 +55,14 @@ function bitunixRequest(method, endpoint, body = {}) {
 
 function getBTCPrice() {
   return new Promise((resolve) => {
-    https.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", (r) => {
+    https.get("https://fapi.bitunix.com/api/v1/futures/ticker?symbol=BTCUSDT", (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
       r.on("end", () => {
-        try { resolve(parseFloat(JSON.parse(data).price)); }
+        try { 
+          const json = JSON.parse(data);
+          resolve(parseFloat(json.data?.lastPrice || json.data?.[0]?.lastPrice || 0)); 
+        }
         catch(e) { resolve(0); }
       });
     }).on("error", () => resolve(0));
