@@ -32,7 +32,6 @@ function bitunixRequest(method, endpoint, body = {}) {
     const payload = method === "POST" ? JSON.stringify(body) : "";
     const queryParams = endpoint.includes("?") ? endpoint.split("?")[1] : "";
     const signature = sign(nonce, timestamp, CONFIG.API_KEY, queryParams, payload, CONFIG.SECRET_KEY);
-
     const options = {
       hostname: "fapi.bitunix.com",
       path: endpoint,
@@ -46,14 +45,10 @@ function bitunixRequest(method, endpoint, body = {}) {
         "language": "en-US",
       },
     };
-
     const req = https.request(options, (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
-      r.on("end", () => {
-        try { resolve(JSON.parse(data)); }
-        catch(e) { reject(e); }
-      });
+      r.on("end", () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
     });
     req.on("error", reject);
     if (method === "POST") req.write(payload);
@@ -98,14 +93,23 @@ async function setLeverage(side) {
   } catch(e) { console.error("Leverage failed:", e.message); }
 }
 
-async function placeTrade(side, price) {
+async function placeTrade(side, price, slFromSignal = null) {
   if (!ACTIVE) { console.log("Bot is paused"); return; }
   if (!price || price === 0) { console.error("Invalid price — trade cancelled"); return; }
 
   const positionSide = side === "BUY" ? "LONG" : "SHORT";
-  const slPrice = side === "BUY"
-    ? (price * (1 - CONFIG.SL_PCT)).toFixed(2)
-    : (price * (1 + CONFIG.SL_PCT)).toFixed(2);
+
+  let slPrice;
+  if (slFromSignal && parseFloat(slFromSignal) > 0) {
+    slPrice = parseFloat(slFromSignal).toFixed(2);
+    console.log(`SL from MR8 line: $${slPrice}`);
+  } else {
+    slPrice = side === "BUY"
+      ? (price * (1 - CONFIG.SL_PCT)).toFixed(2)
+      : (price * (1 + CONFIG.SL_PCT)).toFixed(2);
+    console.log(`SL from CONFIG: $${slPrice}`);
+  }
+
   const tpPrice = side === "BUY"
     ? (price * (1 + CONFIG.TP_PCT)).toFixed(2)
     : (price * (1 - CONFIG.TP_PCT)).toFixed(2);
@@ -117,7 +121,6 @@ async function placeTrade(side, price) {
 
   try {
     await setLeverage(side);
-
     const result = await bitunixRequest("POST", "/api/v1/futures/trade/place_order", {
       symbol: CONFIG.SYMBOL,
       side: side,
@@ -129,9 +132,7 @@ async function placeTrade(side, price) {
       tpStopType: "MARK_PRICE",
       slStopType: "MARK_PRICE",
     });
-
     console.log(`Bitunix response: ${JSON.stringify(result)}`);
-
     if (result.code === 0) {
       console.log(`Order placed! ID: ${result.data?.orderId}`);
     } else {
@@ -174,10 +175,11 @@ const server = http.createServer(async (req, res) => {
     console.log("Webhook received:", signal);
     const side  = signal.side;
     const price = parseFloat(signal.price);
+    const sl    = signal.sl || null;
     if (!side || !price || (side !== "BUY" && side !== "SELL")) {
       res.writeHead(400); res.end("Invalid signal"); return;
     }
-    await placeTrade(side, price);
+    await placeTrade(side, price, sl);
     res.writeHead(200); res.end("OK");
     return;
   }
@@ -190,7 +192,7 @@ const server = http.createServer(async (req, res) => {
     if (!side || (side !== "BUY" && side !== "SELL")) {
       res.writeHead(400); res.end("Invalid side"); return;
     }
-    await placeTrade(side, price);
+    await placeTrade(side, price, null);
     res.writeHead(200); res.end("OK");
     return;
   }
@@ -225,7 +227,7 @@ server.listen(CONFIG.PORT, () => {
   console.log(`║   Symbol:    ${CONFIG.SYMBOL}                    ║`);
   console.log(`║   Size:      $${CONFIG.USDT_SIZE} USDT                ║`);
   console.log(`║   Leverage:  ${CONFIG.LEVERAGE}x                           ║`);
-  console.log(`║   SL:        ${CONFIG.SL_PCT*100}%                         ║`);
+  console.log(`║   SL:        ${CONFIG.SL_PCT*100}% (from MR8 line)        ║`);
   console.log(`║   TP:        ${CONFIG.TP_PCT*100}%                        ║`);
   console.log(`║   Port:      ${CONFIG.PORT}                          ║`);
   console.log("╚════════════════════════════════════════╝");
