@@ -15,7 +15,26 @@ const CONFIG = {
   PORT:       process.env.PORT || 3000,
 };
 
-let ACTIVE    = true;
+const STATE_FILE = path.join(__dirname, "state.json");
+
+function loadState() {
+  try {
+    const raw = fs.readFileSync(STATE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch (e) {
+    return { active: true, lastChanged: new Date().toISOString() };
+  }
+}
+
+function saveState(state) {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  } catch (e) {
+    console.error("Could not save state file:", e.message);
+  }
+}
+
+let STATE = loadState();
 let lastTrade = null;
 
 function sign(nonce, timestamp, apiKey, queryParams, body, secretKey) {
@@ -32,6 +51,7 @@ function bitunixRequest(method, endpoint, body = {}) {
     const payload = method === "POST" ? JSON.stringify(body) : "";
     const queryParams = endpoint.includes("?") ? endpoint.split("?")[1] : "";
     const signature = sign(nonce, timestamp, CONFIG.API_KEY, queryParams, payload, CONFIG.SECRET_KEY);
+
     const options = {
       hostname: "fapi.bitunix.com",
       path: endpoint,
@@ -45,6 +65,7 @@ function bitunixRequest(method, endpoint, body = {}) {
         "language": "en-US",
       },
     };
+
     const req = https.request(options, (r) => {
       let data = "";
       r.on("data", chunk => data += chunk);
@@ -71,7 +92,6 @@ function getBTCPrice() {
         try {
           const json = JSON.parse(data);
           const price = parseFloat(json.data?.[0]?.lastPrice || 0);
-          console.log(`BTC Price: $${price}`);
           resolve(price);
         } catch(e) { resolve(0); }
       });
@@ -94,20 +114,24 @@ async function setLeverage(side) {
 }
 
 async function placeTrade(side, price, slFromSignal = null) {
-  if (!ACTIVE) { console.log("Bot is paused"); return; }
-  if (!price || price === 0) { console.error("Invalid price — trade cancelled"); return; }
+  if (!STATE.active) {
+    console.log(`SKIPPED - bot is paused (paused since ${STATE.lastChanged})`);
+    return { skipped: true, reason: "paused" };
+  }
+  if (!price || price === 0) {
+    console.error("Invalid price - trade cancelled");
+    return { skipped: true, reason: "invalid_price" };
+  }
 
   const positionSide = side === "BUY" ? "LONG" : "SHORT";
 
   let slPrice;
   if (slFromSignal && parseFloat(slFromSignal) > 0) {
     slPrice = parseFloat(slFromSignal).toFixed(2);
-    console.log(`SL from MR8 line: $${slPrice}`);
   } else {
     slPrice = side === "BUY"
       ? (price * (1 - CONFIG.SL_PCT)).toFixed(2)
       : (price * (1 + CONFIG.SL_PCT)).toFixed(2);
-    console.log(`SL from CONFIG: $${slPrice}`);
   }
 
   const tpPrice = side === "BUY"
@@ -135,10 +159,15 @@ async function placeTrade(side, price, slFromSignal = null) {
     console.log(`Bitunix response: ${JSON.stringify(result)}`);
     if (result.code === 0) {
       console.log(`Order placed! ID: ${result.data?.orderId}`);
+      return { success: true, orderId: result.data?.orderId };
     } else {
       console.error(`Order failed: ${result.msg}`);
+      return { success: false, error: result.msg };
     }
-  } catch(e) { console.error("Trade error:", e.message); }
+  } catch(e) {
+    console.error("Trade error:", e.message);
+    return { success: false, error: e.message };
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -154,7 +183,12 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "running", active: ACTIVE, time: new Date().toISOString() }));
+    res.end(JSON.stringify({
+      status: "running",
+      active: STATE.active,
+      lastChanged: STATE.lastChanged,
+      time: new Date().toISOString()
+    }));
     return;
   }
 
@@ -179,8 +213,9 @@ const server = http.createServer(async (req, res) => {
     if (!side || !price || (side !== "BUY" && side !== "SELL")) {
       res.writeHead(400); res.end("Invalid signal"); return;
     }
-    await placeTrade(side, price, sl);
-    res.writeHead(200); res.end("OK");
+    const result = await placeTrade(side, price, sl);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
     return;
   }
 
@@ -192,8 +227,9 @@ const server = http.createServer(async (req, res) => {
     if (!side || (side !== "BUY" && side !== "SELL")) {
       res.writeHead(400); res.end("Invalid side"); return;
     }
-    await placeTrade(side, price, null);
-    res.writeHead(200); res.end("OK");
+    const result = await placeTrade(side, price, null);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result));
     return;
   }
 
@@ -210,9 +246,14 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && req.url === "/toggle") {
     const body = await getBody();
-    ACTIVE = body.active !== false;
-    console.log(`Bot ${ACTIVE ? "ACTIVATED" : "PAUSED"}`);
-    res.writeHead(200); res.end("OK");
+    STATE = {
+      active: body.active !== false,
+      lastChanged: new Date().toISOString()
+    };
+    saveState(STATE);
+    console.log(`Bot ${STATE.active ? "ACTIVATED" : "PAUSED"} at ${STATE.lastChanged}`);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(STATE));
     return;
   }
 
@@ -220,15 +261,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(CONFIG.PORT, () => {
-  console.log("╔════════════════════════════════════════╗");
-  console.log("║   McGinley Ribbon 8 Bot — LIVE         ║");
-  console.log("╠════════════════════════════════════════╣");
-  console.log(`║   Dashboard: /dashboard                ║`);
-  console.log(`║   Symbol:    ${CONFIG.SYMBOL}                    ║`);
-  console.log(`║   Size:      $${CONFIG.USDT_SIZE} USDT                ║`);
-  console.log(`║   Leverage:  ${CONFIG.LEVERAGE}x                           ║`);
-  console.log(`║   SL:        ${CONFIG.SL_PCT*100}% (from MR8 line)        ║`);
-  console.log(`║   TP:        ${CONFIG.TP_PCT*100}%                        ║`);
-  console.log(`║   Port:      ${CONFIG.PORT}                          ║`);
-  console.log("╚════════════════════════════════════════╝");
+  console.log("====================================");
+  console.log("McGinley Ribbon 8 Bot - LIVE");
+  console.log("====================================");
+  console.log(`Dashboard: /dashboard`);
+  console.log(`Symbol:    ${CONFIG.SYMBOL}`);
+  console.log(`Size:      $${CONFIG.USDT_SIZE} USDT`);
+  console.log(`Leverage:  ${CONFIG.LEVERAGE}x`);
+  console.log(`SL:        ${CONFIG.SL_PCT*100}% (or from MR8 line if signal includes it)`);
+  console.log(`TP:        ${CONFIG.TP_PCT*100}%`);
+  console.log(`Port:      ${CONFIG.PORT}`);
+  console.log(`STATE ON STARTUP: active=${STATE.active} (loaded from disk, last changed ${STATE.lastChanged})`);
+  console.log("====================================");
 });
