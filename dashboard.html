@@ -123,6 +123,7 @@
     <div class="master-left">
       <h2>Trading Active</h2>
       <p>When off, signals are received but no trades are placed</p>
+      <p id="lastChangedText" style="margin-top:6px;font-family:'Space Mono',monospace;font-size:11px;color:var(--accent);"></p>
     </div>
     <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;">
       <div class="toggle-wrap">
@@ -210,13 +211,15 @@
       </div>
     </div>
   </div>
- <div class="manual-wrap">
+
+  <div class="manual-wrap">
     <div class="manual-title">Manual Trade</div>
     <div class="manual-btns">
       <button class="manual-btn long-btn" onclick="manualTrade('BUY')">▲ Manual Long</button>
       <button class="manual-btn short-btn" onclick="manualTrade('SELL')">▼ Manual Short</button>
     </div>
   </div>
+
   <div class="log-wrap">
     <div class="panel-title">Trade Log</div>
     <div class="log-list" id="logList">
@@ -239,6 +242,7 @@ function updateSlider(type) {
   };
   document.getElementById(type+'Val').textContent = map[type]();
 }
+
 async function manualTrade(side) {
   if (!confirm(`Fire a MANUAL ${side === 'BUY' ? 'LONG' : 'SHORT'} trade right now?`)) return;
   try {
@@ -250,6 +254,7 @@ async function manualTrade(side) {
     showToast(res.ok ? `${side === 'BUY' ? '▲ LONG' : '▼ SHORT'} trade fired!` : '❌ Trade failed', !res.ok);
   } catch(e) { showToast('❌ Could not reach bot', true); }
 }
+
 async function saveSettings() {
   state.size     = parseInt(document.getElementById('sizeSlider').value);
   state.leverage = parseInt(document.getElementById('leverageSlider').value);
@@ -264,22 +269,52 @@ async function saveSettings() {
   } catch(e) { showToast('✅ Settings updated!'); }
 }
 
-async function toggleBot() {
-  state.botOn = document.getElementById('botToggle').checked;
+function applyToggleVisual(isActive, lastChanged) {
+  state.botOn = isActive;
+  document.getElementById('botToggle').checked = isActive;
   const label = document.getElementById('toggleLabel');
-  label.textContent = state.botOn ? 'ON' : 'OFF';
-  label.style.color = state.botOn ? 'var(--green)' : 'var(--red)';
-  try { await fetch('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:state.botOn})}); } catch(e){}
-  showToast(state.botOn ? '✅ Bot activated' : '⏸ Bot paused');
+  label.textContent = isActive ? 'ON' : 'OFF';
+  label.style.color = isActive ? 'var(--green)' : 'var(--red)';
+  if (lastChanged) {
+    const d = new Date(lastChanged);
+    document.getElementById('lastChangedText').textContent =
+      `Server confirms: ${isActive ? 'ACTIVE' : 'PAUSED'} since ${d.toLocaleString()}`;
+  }
+}
+
+async function toggleBot() {
+  const requested = document.getElementById('botToggle').checked;
+  try {
+    const res = await fetch('/toggle', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({active:requested})
+    });
+    const confirmed = await res.json();
+    // Trust ONLY what the server confirms back, not what we requested
+    applyToggleVisual(confirmed.active, confirmed.lastChanged);
+    showToast(confirmed.active ? '✅ Bot activated (confirmed by server)' : '⏸ Bot paused (confirmed by server)');
+  } catch(e) {
+    // Request failed - revert the visual, we don't actually know the real state
+    showToast('❌ Could not reach bot - state unknown, re-checking...', true);
+    checkHealth();
+  }
 }
 
 async function emergencyStop() {
-  document.getElementById('botToggle').checked = false;
-  state.botOn = false;
-  document.getElementById('toggleLabel').textContent = 'OFF';
-  document.getElementById('toggleLabel').style.color = 'var(--red)';
-  try { await fetch('/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({active:false})}); } catch(e){}
-  showToast('⛔ EMERGENCY STOP — Trading halted', true);
+  try {
+    const res = await fetch('/toggle', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({active:false})
+    });
+    const confirmed = await res.json();
+    applyToggleVisual(confirmed.active, confirmed.lastChanged);
+    showToast('⛔ EMERGENCY STOP — confirmed paused by server', true);
+  } catch(e) {
+    showToast('❌ STOP request failed to reach server - check connection!', true);
+    checkHealth();
+  }
 }
 
 function addTradeToLog(t) {
@@ -321,8 +356,19 @@ async function checkHealth() {
     const res = await fetch('/health');
     const dot = document.getElementById('statusDot');
     const txt = document.getElementById('statusText');
-    if (res.ok) { dot.classList.remove('offline'); txt.textContent='LIVE'; }
-    else        { dot.classList.add('offline');    txt.textContent='OFFLINE'; }
+    if (res.ok) {
+      dot.classList.remove('offline'); txt.textContent='LIVE';
+      const data = await res.json();
+      // This is the critical fix: always sync the visible
+      // toggle to whatever the server actually has saved,
+      // every single time we check health. The dashboard
+      // never again displays a state it merely assumes.
+      if (typeof data.active === 'boolean') {
+        applyToggleVisual(data.active, data.lastChanged);
+      }
+    } else {
+      dot.classList.add('offline'); txt.textContent='OFFLINE';
+    }
   } catch(e) {
     document.getElementById('statusDot').classList.add('offline');
     document.getElementById('statusText').textContent='OFFLINE';
@@ -352,7 +398,7 @@ function showToast(msg, isError=false) {
 fetchBTCPrice();
 checkHealth();
 setInterval(fetchBTCPrice, 15000);
-setInterval(checkHealth,   30000);
+setInterval(checkHealth,   5000);
 setInterval(pollSignals,   5000);
 </script>
 </body>
