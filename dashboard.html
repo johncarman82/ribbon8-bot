@@ -231,7 +231,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const state = { botOn:true, size:100, leverage:5, sl:2.0, tp:20.0, trades:[], lastTradeId:null };
+const state = { botOn:true, size:100, leverage:5, sl:2.0, tp:20.0, trades:[], lastTradeId:null, settingsLoaded:false };
 
 function updateSlider(type) {
   const map = {
@@ -241,6 +241,38 @@ function updateSlider(type) {
     tp:       () => `${parseFloat(document.getElementById('tpSlider').value).toFixed(1)}%`,
   };
   document.getElementById(type+'Val').textContent = map[type]();
+}
+
+// Sets the four sliders + their displayed values from
+// real server data. Called on first load and every health
+// poll, the same pattern already used for the on/off toggle.
+// This is the actual fix: previously the sliders only ever
+// showed their hardcoded HTML defaults (100 / 5 / 2 / 20)
+// and a Save click updated the server but never round-tripped
+// back to what's displayed, so a page reload looked like the
+// setting had been silently reverted - it hadn't, the display
+// was just never told to ask.
+function applySettingsFromServer(data) {
+  if (typeof data.usdt_size === 'number') {
+    document.getElementById('sizeSlider').value = data.usdt_size;
+    state.size = data.usdt_size;
+  }
+  if (typeof data.leverage === 'number') {
+    document.getElementById('leverageSlider').value = data.leverage;
+    state.leverage = data.leverage;
+  }
+  if (typeof data.sl_pct === 'number') {
+    document.getElementById('slSlider').value = (data.sl_pct * 100).toFixed(1);
+    state.sl = data.sl_pct * 100;
+  }
+  if (typeof data.tp_pct === 'number') {
+    document.getElementById('tpSlider').value = (data.tp_pct * 100).toFixed(1);
+    state.tp = data.tp_pct * 100;
+  }
+  updateSlider('size');
+  updateSlider('leverage');
+  updateSlider('sl');
+  updateSlider('tp');
 }
 
 async function manualTrade(side) {
@@ -265,8 +297,16 @@ async function saveSettings() {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ usdt_size:state.size, leverage:state.leverage, sl_pct:state.sl/100, tp_pct:state.tp/100 })
     });
-    showToast(res.ok ? '✅ Settings saved and applied!' : '❌ Save failed', !res.ok);
-  } catch(e) { showToast('✅ Settings updated!'); }
+    if (res.ok) {
+      const confirmed = await res.json();
+      // Re-apply from the server's own echo of what it saved,
+      // not just from what we sent - same trust pattern as toggle.
+      applySettingsFromServer(confirmed);
+      showToast('✅ Settings saved and confirmed by server!');
+    } else {
+      showToast('❌ Save failed', true);
+    }
+  } catch(e) { showToast('❌ Could not reach bot to save settings', true); }
 }
 
 function applyToggleVisual(isActive, lastChanged) {
@@ -291,11 +331,9 @@ async function toggleBot() {
       body:JSON.stringify({active:requested})
     });
     const confirmed = await res.json();
-    // Trust ONLY what the server confirms back, not what we requested
     applyToggleVisual(confirmed.active, confirmed.lastChanged);
     showToast(confirmed.active ? '✅ Bot activated (confirmed by server)' : '⏸ Bot paused (confirmed by server)');
   } catch(e) {
-    // Request failed - revert the visual, we don't actually know the real state
     showToast('❌ Could not reach bot - state unknown, re-checking...', true);
     checkHealth();
   }
@@ -359,12 +397,18 @@ async function checkHealth() {
     if (res.ok) {
       dot.classList.remove('offline'); txt.textContent='LIVE';
       const data = await res.json();
-      // This is the critical fix: always sync the visible
-      // toggle to whatever the server actually has saved,
-      // every single time we check health. The dashboard
-      // never again displays a state it merely assumes.
       if (typeof data.active === 'boolean') {
         applyToggleVisual(data.active, data.lastChanged);
+      }
+      // Only force-overwrite the sliders from server data on
+      // the FIRST successful health check after page load.
+      // After that, the person may be actively dragging a
+      // slider mid-poll, and we don't want a 5-second background
+      // poll yanking it back while they're adjusting it - the
+      // explicit Save button is what pushes changes from here on.
+      if (!state.settingsLoaded) {
+        applySettingsFromServer(data);
+        state.settingsLoaded = true;
       }
     } else {
       dot.classList.add('offline'); txt.textContent='OFFLINE';
