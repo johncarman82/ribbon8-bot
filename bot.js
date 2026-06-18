@@ -8,21 +8,44 @@ const CONFIG = {
   API_KEY:    "da7257b7b80b0d24624f88215b564466",
   SECRET_KEY: "d7edd407a5ed819a2c17612a7abbcd8d",
   SYMBOL:     "BTCUSDT",
-  USDT_SIZE:  100,
-  LEVERAGE:   5,
-  SL_PCT:     0.02,
-  TP_PCT:     0.20,
   PORT:       process.env.PORT || 3000,
 };
 
+// ─────────────────────────────────────────────
+// PERSISTENT STATE
+// Both the on/off toggle AND the trade settings
+// now live in this same file on disk. This fixes
+// the bug where changing Position Size or Leverage
+// on the dashboard worked for the very next trade
+// but reverted to hardcoded defaults (100 / 5x)
+// the moment the page was reloaded - because the
+// sliders were never told what the server actually
+// had saved. Same root cause as the earlier toggle
+// bug, just on different fields.
+// ─────────────────────────────────────────────
 const STATE_FILE = path.join(__dirname, "state.json");
 
 function loadState() {
   try {
     const raw = fs.readFileSync(STATE_FILE, "utf8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return {
+      active:      parsed.active !== undefined ? parsed.active : true,
+      lastChanged: parsed.lastChanged || new Date().toISOString(),
+      usdt_size:   parsed.usdt_size   || 100,
+      leverage:    parsed.leverage    || 5,
+      sl_pct:      parsed.sl_pct      || 0.02,
+      tp_pct:      parsed.tp_pct      || 0.20,
+    };
   } catch (e) {
-    return { active: true, lastChanged: new Date().toISOString() };
+    return {
+      active: true,
+      lastChanged: new Date().toISOString(),
+      usdt_size: 100,
+      leverage: 5,
+      sl_pct: 0.02,
+      tp_pct: 0.20,
+    };
   }
 }
 
@@ -106,7 +129,7 @@ async function setLeverage(side) {
   try {
     const result = await bitunixRequest("POST", "/api/v1/futures/account/set_leverage", {
       symbol: CONFIG.SYMBOL,
-      leverage: CONFIG.LEVERAGE,
+      leverage: STATE.leverage,
       positionSide,
     });
     console.log(`Leverage response: ${JSON.stringify(result)}`);
@@ -130,16 +153,16 @@ async function placeTrade(side, price, slFromSignal = null) {
     slPrice = parseFloat(slFromSignal).toFixed(2);
   } else {
     slPrice = side === "BUY"
-      ? (price * (1 - CONFIG.SL_PCT)).toFixed(2)
-      : (price * (1 + CONFIG.SL_PCT)).toFixed(2);
+      ? (price * (1 - STATE.sl_pct)).toFixed(2)
+      : (price * (1 + STATE.sl_pct)).toFixed(2);
   }
 
   const tpPrice = side === "BUY"
-    ? (price * (1 + CONFIG.TP_PCT)).toFixed(2)
-    : (price * (1 - CONFIG.TP_PCT)).toFixed(2);
-  const qty = ((CONFIG.USDT_SIZE * CONFIG.LEVERAGE) / price).toFixed(4);
+    ? (price * (1 + STATE.tp_pct)).toFixed(2)
+    : (price * (1 - STATE.tp_pct)).toFixed(2);
+  const qty = ((STATE.usdt_size * STATE.leverage) / price).toFixed(4);
 
-  console.log(`TRADE: ${side} @ $${price} | TP $${tpPrice} | SL $${slPrice} | Qty ${qty}`);
+  console.log(`TRADE: ${side} @ $${price} | TP $${tpPrice} | SL $${slPrice} | Qty ${qty} | Size $${STATE.usdt_size} | Lev ${STATE.leverage}x`);
 
   lastTrade = { side, price, tp: tpPrice, sl: slPrice, time: new Date().toLocaleTimeString() };
 
@@ -181,12 +204,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // /health is now the single source of truth for
+  // EVERYTHING the dashboard displays on load: not
+  // just active/paused, but size, leverage, SL%, TP%
+  // too. This is the actual fix for the bug reported.
   if (req.method === "GET" && req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
       status: "running",
       active: STATE.active,
       lastChanged: STATE.lastChanged,
+      usdt_size: STATE.usdt_size,
+      leverage: STATE.leverage,
+      sl_pct: STATE.sl_pct,
+      tp_pct: STATE.tp_pct,
       time: new Date().toISOString()
     }));
     return;
@@ -233,23 +264,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // /settings now writes into STATE and saves to
+  // disk - exactly like /toggle already did. This
+  // is what makes the values survive a page reload.
   if (req.method === "POST" && req.url === "/settings") {
     const body = await getBody();
-    if (body.usdt_size) CONFIG.USDT_SIZE = body.usdt_size;
-    if (body.leverage)  CONFIG.LEVERAGE  = body.leverage;
-    if (body.sl_pct)    CONFIG.SL_PCT    = body.sl_pct;
-    if (body.tp_pct)    CONFIG.TP_PCT    = body.tp_pct;
-    console.log(`Settings: $${CONFIG.USDT_SIZE} | ${CONFIG.LEVERAGE}x | SL ${CONFIG.SL_PCT*100}% | TP ${CONFIG.TP_PCT*100}%`);
-    res.writeHead(200); res.end("OK");
+    if (body.usdt_size) STATE.usdt_size = body.usdt_size;
+    if (body.leverage)  STATE.leverage  = body.leverage;
+    if (body.sl_pct)    STATE.sl_pct    = body.sl_pct;
+    if (body.tp_pct)    STATE.tp_pct    = body.tp_pct;
+    saveState(STATE);
+    console.log(`Settings saved: $${STATE.usdt_size} | ${STATE.leverage}x | SL ${STATE.sl_pct*100}% | TP ${STATE.tp_pct*100}%`);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(STATE));
     return;
   }
 
   if (req.method === "POST" && req.url === "/toggle") {
     const body = await getBody();
-    STATE = {
-      active: body.active !== false,
-      lastChanged: new Date().toISOString()
-    };
+    STATE.active = body.active !== false;
+    STATE.lastChanged = new Date().toISOString();
     saveState(STATE);
     console.log(`Bot ${STATE.active ? "ACTIVATED" : "PAUSED"} at ${STATE.lastChanged}`);
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -266,11 +300,11 @@ server.listen(CONFIG.PORT, () => {
   console.log("====================================");
   console.log(`Dashboard: /dashboard`);
   console.log(`Symbol:    ${CONFIG.SYMBOL}`);
-  console.log(`Size:      $${CONFIG.USDT_SIZE} USDT`);
-  console.log(`Leverage:  ${CONFIG.LEVERAGE}x`);
-  console.log(`SL:        ${CONFIG.SL_PCT*100}% (or from MR8 line if signal includes it)`);
-  console.log(`TP:        ${CONFIG.TP_PCT*100}%`);
+  console.log(`Size:      $${STATE.usdt_size} USDT`);
+  console.log(`Leverage:  ${STATE.leverage}x`);
+  console.log(`SL:        ${STATE.sl_pct*100}% (or from MR8 line if signal includes it)`);
+  console.log(`TP:        ${STATE.tp_pct*100}%`);
   console.log(`Port:      ${CONFIG.PORT}`);
-  console.log(`STATE ON STARTUP: active=${STATE.active} (loaded from disk, last changed ${STATE.lastChanged})`);
+  console.log(`STATE ON STARTUP: active=${STATE.active}, loaded from disk, last changed ${STATE.lastChanged}`);
   console.log("====================================");
 });
